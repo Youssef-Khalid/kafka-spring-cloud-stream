@@ -1,9 +1,8 @@
 package com.example.kafkaspringcloudstream.controllers;
 
 import com.example.kafkaspringcloudstream.events.PageEvent;
-import org.apache.kafka.common.protocol.types.Field;
-import org.apache.kafka.streams.KeyQueryMetadata;
 import org.apache.kafka.streams.KeyValue;
+import org.apache.kafka.streams.errors.InvalidStateStoreException;
 import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.QueryableStoreTypes;
@@ -27,7 +26,6 @@ import java.util.Random;
 public class PageEventController {
     @Autowired
     private StreamBridge streamBridge;
-
     @Autowired
     private InteractiveQueryService interactiveQueryService; //kafka stream
     @GetMapping("/publish")
@@ -40,7 +38,7 @@ public class PageEventController {
         return event;
     }
 
-    @GetMapping(path = "/analytics", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    /*@GetMapping(path = "/analytics", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<Map<String, Long>> analytics(){
         return Flux.interval(Duration.ofSeconds(1))
                 .map(sequence ->{
@@ -55,5 +53,32 @@ public class PageEventController {
                     }
                     return stringLongMap;
                 });
+    }*/
+    @GetMapping(path = "/analytics", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<Map<String, Long>> analytics() {
+        return Flux.interval(Duration.ofSeconds(1))
+                .map(sequence -> {
+                    Map<String, Long> stringLongMap = new HashMap<>();
+                    try {
+                        // Try to get the store
+                        ReadOnlyWindowStore<String, Long> windowStore =
+                                interactiveQueryService.getQueryableStore("count-store", QueryableStoreTypes.windowStore());
+
+                        Instant now = Instant.now();
+                        Instant from = now.minusSeconds(5);
+
+                        try (KeyValueIterator<Windowed<String>, Long> fetchAll = windowStore.fetchAll(from, now)) {
+                            while (fetchAll.hasNext()) {
+                                KeyValue<Windowed<String>, Long> next = fetchAll.next();
+                                stringLongMap.put(next.key.key(), next.value);
+                            }
+                        }
+                    } catch (InvalidStateStoreException e) {
+                        // Log that we are waiting for Kafka Streams to start
+                        System.out.println("State store 'count-store' not ready yet...");
+                    }
+                    return stringLongMap; // Returns empty map until store is RUNNING
+                })
+                .share(); // Allows multiple browser tabs to share the same flux
     }
 }
